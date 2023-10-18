@@ -47,99 +47,63 @@ func firstfew(s []byte) string {
 	return string(ss)
 }
 
+// Some things one may want from the question structure.
+// Most important are questiontext and perhaps answer.
+// You could also add
+// Qname      string   `xml:"name>text"`
+//
 type qstrct struct {
 	XMLName xml.Name `xml:"question"`
 	Attr    xml.Attr `xml:"name,attr"`
-	Type    string   `xml:"type"`
-	Text    string   `xml:",text"`
-	Comment string   `xml:",comment"`
-	Name    string   `xml:",name"`
-	Qtext   string   `xml:",questiontext"`
-	CharDat string   `xml:",chardata"`
+	Ctgry   string   `xml:"category>text"`
+	Qtxt    string   `xml:"questiontext>text"`
+	Answr   string   `xml:"answer>text"`
 	Inner   []byte   `xml:",innerxml"` // you need the comma before innerxml
 }
 
 type quiz struct {
 	XMLName xml.Name `xml:"quiz"`
-	QQtext string    `xml:",questiontext"`
-	Attr xml.Attr `xml:"name,attr"`
-	Comment string `xml:",comment"`
-	Qs []qstrct `xml:"question"`
+	Qs      []qstrct `xml:"question"`
 }
 
+func breaker() {}
 
-// tokenInfo gets a token and prints out some things. This is for debugging
-// or looking at the structures
-// StartElement, EndElement, CharData, Comment, ProcInst, or Directive.
-func tokenInfo(tok xml.Token) string {
-	var s string
-	switch t := tok.(type) {
-	case xml.StartElement:
-		s = fmt.Sprintf("startelement name: %v attributes ", t.Name)
-		for _, a := range t.Attr {
-			s = s + fmt.Sprintf("name >>%s<< Value >>%s<<", a.Name.Local, a.Value)
+// cleanupQstns is given a slice of questions and removes duplicates.
+// Try to put each question in a hash. If it is already there, remove
+// the question from the slice.
+// If answerFlag is set, do not add the <answer> into the key
+// Do not worry about the order, we will sort them anyway.
+func cleanupQstns(qstns []qstrct, answrFlag bool) ([]qstrct, error) {
+	qhash := make (map[string]struct{}, len(qstns))
+	var nothing struct {}
+	for _, q := range qstns{
+		var key string
+		if answrFlag {
+			key = q.Qtxt
+		} else {
+			key = q.Qtxt + q.Answr
 		}
-	case xml.EndElement:
-		s = fmt.Sprintln("endelement space Local|", t.Name.Space, "|", t.Name.Local)
-	case xml.CharData:
-		s = fmt.Sprintln("chardata|", string(t))
-	case xml.Comment:
-		s = fmt.Sprintln("comment |", string(t))
-	case xml.ProcInst:
-		s = fmt.Sprintln("ProcInst Target Inst |", t.Target, "|", string(t.Inst))
-	case xml.Directive:
-		s = fmt.Sprintln("Directive |", string(t))
-	default:
-		s = fmt.Sprintln("unknown token", tok)
+		if _, ok := qhash[key]; ok {
+			fmt.Println ("dup", q.Qtxt)
+		} else {
+			qhash[key] = nothing
+		}
 	}
-	return strings.TrimSpace(s)
+	breaker()
+	return qstns, nil
 }
-func breaker () {}
+
 // dedup takes input and output descriptors and flags. Currently just
 // the answrFlag which tells us not to worry about checking the answers.
-func dedup(fIn io.Reader, fOut io.Writer, answrFlag bool) error {
-	d := xml.NewDecoder(fIn)
-
-	//	var actions []Executer // this seems to be a list of things that were done
-
-	// Finding the first Root tag
-	// for {
-	// 	tok, err := d.Token()
-	// 	if err != nil {
-	// 		return nil
-	// 	}
-	// 	fmt.Println("before start", tokenInfo(tok))
-	// 	if _, ok := tok.(xml.StartElement); ok {
-	// 		break
-	// 	}
-	// }
-	fmt.Println("------ starting loop ---------")
-	// Looping through the rest of the tokens
-	// finding the start of each.
-
-	for {
-		v, err := d.Token()
-		if err != nil {
-			return nil
-		}
-		var qz quiz
-		switch t := v.(type) {
-
-		case xml.StartElement:
-			fmt.Println(tokenInfo(v))
-			breaker()
-			if err := d.DecodeElement(&qz, &t); err != nil {
-				return err
-			}
-			nothing(qz)
-		case xml.EndElement:
-			fmt.Println("endelement", tokenInfo(v))
-			return nil
-		default:
-			fmt.Println(tokenInfo(v))
-		}
+func dedup(fIn *os.File, fOut io.Writer, answrFlag bool) error {
+	var qz quiz
+	d := xml.NewDecoder (fIn)
+	if e := d.Decode(&qz); e != nil {
+		return e
 	}
-	return nil
+	var err error
+	qz.Qs, err = cleanupQstns(qz.Qs, answrFlag)
+	return err
 }
 
 // mymain does the work and either returns an error, which might be nil
