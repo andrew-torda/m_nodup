@@ -43,7 +43,11 @@ func nothing(x interface{}) { return }
 
 // firstfew gives us the first few characters of a byte slice
 func firstfew(s []byte) string {
-	ss := s[:10]
+	m := len(s)
+	if m > 40 {
+		m = 40
+	}
+	ss := s[:m]
 	return string(ss)
 }
 
@@ -51,59 +55,86 @@ func firstfew(s []byte) string {
 // Most important are questiontext and perhaps answer.
 // You could also add
 // Qname      string   `xml:"name>text"`
+// Ctgry   string   `xml:"category>text,omitempty"`
+// Qtxt    string   `xml:"questiontext>text,omitempty"`
+// Answr   string   `xml:"answer>text,omitempty"`
+// 	//	Chars   string   `xml:",chardata"` - don't know what this is
 //
 type qstrct struct {
-	XMLName xml.Name `xml:"question"`
-	Attr    xml.Attr `xml:"name,attr"`
-	Ctgry   string   `xml:"category>text"`
-	Qtxt    string   `xml:"questiontext>text"`
-	Answr   string   `xml:"answer>text"`
-	Inner   []byte   `xml:",innerxml"` // you need the comma before innerxml
+	XMLName xml.Name `xml:"question,omitempty"`
+	Attr    xml.Attr `xml:",any,attr"`
+	Inner   string   `xml:",innerxml"` // you need the comma before innerxml
 }
 
 type quiz struct {
 	XMLName xml.Name `xml:"quiz"`
+	Attr    xml.Attr `xml:",any,attr"`
 	Qs      []qstrct `xml:"question"`
 }
 
 func breaker() {}
 
-// cleanupQstns is given a slice of questions and removes duplicates.
-// Try to put each question in a hash. If it is already there, remove
-// the question from the slice.
-// If answerFlag is set, do not add the <answer> into the key
-// Do not worry about the order, we will sort them anyway.
-func cleanupQstns(qstns []qstrct, answrFlag bool) ([]qstrct, error) {
-	qhash := make (map[string]struct{}, len(qstns))
-	var nothing struct {}
-	for _, q := range qstns{
-		var key string
-		if answrFlag {
-			key = q.Qtxt
-		} else {
-			key = q.Qtxt + q.Answr
-		}
+// whotToDelete is given a slice of questions. It returns a bool slice
+// called delme. If delme[i] is true, then question [i] is a duplicate
+// and should be removed.
+func whoToDelete(qstns []qstrct, delme []bool) ([]bool, error) {
+	var nothing struct{}
+	qhash := make(map[string]struct{}, len(qstns))
+
+	ndel := 0
+	for i, q := range qstns {
+		key := q.Inner
 		if _, ok := qhash[key]; ok {
-			fmt.Println ("dup", q.Qtxt)
+			ndel++
+			delme[i] = true
 		} else {
 			qhash[key] = nothing
 		}
 	}
-	breaker()
-	return qstns, nil
+	fmt.Println(ndel, "duplicates from", len(qstns))
+	return delme, nil
+}
+
+// cleanQstns (qstns) runs down the list of questions and gets rid of everything except
+// for the inner xml
+func cleanQstns(qstns []qstrct) []qstrct {
+	for i, q := range qstns {
+		var qempty qstrct
+		qempty.Attr = q.Attr
+		qempty.Inner = q.Inner
+		qstns[i] = qempty
+	}
+	return qstns
 }
 
 // dedup takes input and output descriptors and flags. Currently just
 // the answrFlag which tells us not to worry about checking the answers.
-func dedup(fIn *os.File, fOut io.Writer, answrFlag bool) error {
+func dedup(fIn io.Reader, fOut io.Writer, answrFlag bool) error {
 	var qz quiz
-	d := xml.NewDecoder (fIn)
-	if e := d.Decode(&qz); e != nil {
-		return e
-	}
 	var err error
-	qz.Qs, err = cleanupQstns(qz.Qs, answrFlag)
-	return err
+	if err := xml.NewDecoder(fIn).Decode(&qz); err != nil {
+		return err
+	}
+	qstns := qz.Qs
+	delme := make([]bool, len(qstns)) // entries to be deleted
+	if delme, err = whoToDelete(qz.Qs, delme); err != nil {
+		return err
+	}
+	for i := 0; i < len(qstns); i++ { // don't use a range. The qs slice gets smaller.
+		if delme[i] {
+			qstns[i] = qstns[len(qstns)-1]
+			qstns = qstns[:len(qstns)-1]
+		}
+	}
+	//	qstns = cleanQstns(qstns)
+	qz.Qs = qstns // The shortened, cleaned up slice
+
+	breaker()
+	fmt.Fprintf(fOut, "%s", xml.Header)
+	enc := xml.NewEncoder(fOut)
+	enc.Indent("", " ")
+	enc.Encode(qz)
+	return (enc.Flush()) // newer versions of go have enc.Close().
 }
 
 // mymain does the work and either returns an error, which might be nil
