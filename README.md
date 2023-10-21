@@ -24,9 +24,10 @@ We say that two questions are identical if
 These criteria are not obvious. We could also consider just checking the whole question.
 
 # Example
-
+```
    go build m_nodup.go
    m_nodup -f testme.xml
+```
 
 Should remove 13 duplicates and produce a file called testme_nodup.xml.
 
